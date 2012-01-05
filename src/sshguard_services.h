@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2007,2008,2009,2010 Mij <mij@sshguard.net>
+ * Copyright (c) 2012 sutaburosu <steve@st4vs.net>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -62,4 +63,7 @@
 
 /* vsftpd */
 #define SERVICES_VSFTPD                 330
+
+/* Asterisk */
+#define SERVICES_ASTERISK               340
 #endif

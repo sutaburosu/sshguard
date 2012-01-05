@@ -2,6 +2,7 @@
 
 /*
  * Copyright (c) 2007,2008,2009,2010 Mij <mij@sshguard.net>
+ * Copyright (c) 2012 sutaburosu <steve@st4vs.net>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -81,11 +82,12 @@ static struct {
 }
 
 /* semantic values for tokens */
-%token <str> IPv4 IPv6 HOSTADDR WORD
+%token <str> IPv4 IPv6 HOSTADDR SOCKETADDR WORD
 %token <num> INTEGER SYSLOG_BANNER_PID LAST_LINE_REPEATED_N_TIMES
 
 /* flat tokens */
 %token SYSLOG_BANNER TIMESTAMP_SYSLOG TIMESTAMP_TAI64 AT_TIMESTAMP_TAI64 METALOG_BANNER
+%token TIMESTAMP_ASTERISK ASTERISK_BANNER
 /* ssh */
 %token SSH_INVALUSERPREF SSH_NOTALLOWEDPREF SSH_NOTALLOWEDSUFF
 %token SSH_LOGINERR_PREF SSH_LOGINERR_SUFF SSH_LOGINERR_PAM
@@ -111,6 +113,10 @@ static struct {
 %token PUREFTPD_LOGINERR_PREF PUREFTPD_LOGINERR_SUFF
 /* vsftpd */
 %token VSFTPD_LOGINERR_PREF VSFTPD_LOGINERR_SUFF
+/* Asterisk */
+%token ASTERISK_REGFAIL_PREF ASTERISK_REGFAIL_SUFF
+%token ASTERISK_AUTHFAIL ASTERISK_FAKEAUTHREJ
+%token ASTERISK_NOREG ASTERISK_MD5FAIL_PREF ASTERISK_MD5FAIL_SUFF
 
 /* msg_multiple returns the multiplicity degree of its recognized message */
 %type <num> msg_multiple
@@ -122,6 +128,7 @@ text:
     syslogent
     | multilogent
     | metalogent
+    | asterisklogent
     | logmsg
     ;
 
@@ -157,6 +164,13 @@ metalogent:
     METALOG_BANNER logmsg
     ;
 
+asterisklogent:
+    ASTERISK_BANNER logmsg 
+    | SYSLOG_BANNER ASTERISK_BANNER logmsg
+    | SYSLOG_BANNER_PID ASTERISK_BANNER logmsg
+    | METALOG_BANNER ASTERISK_BANNER logmsg
+    ;
+
 /* the "payload" of a log entry: the oridinal message generated from a process */
 logmsg:
       /* individual messages */
@@ -177,6 +191,7 @@ msg_single:
     | proftpdmsg        {   parsed_attack.service = SERVICES_PROFTPD; }
     | pureftpdmsg       {   parsed_attack.service = SERVICES_PUREFTPD; }
     | vsftpdmsg         {   parsed_attack.service = SERVICES_VSFTPD; }
+    | asteriskmsg       {   parsed_attack.service = SERVICES_ASTERISK; }
     ;
 
 msg_multiple:
@@ -339,6 +354,34 @@ vsftpdmsg:
     VSFTPD_LOGINERR_PREF addr VSFTPD_LOGINERR_SUFF
     ;
 
+/* attack rules for Asterisk */
+asteriskmsg:
+    asterisk_regfail
+    | asterisk_authfail
+    | asterisk_fakeauthrej
+    | asterisk_noreg
+    | asterisk_md5fail
+    ;
+
+asterisk_regfail:
+    ASTERISK_REGFAIL_PREF addr ASTERISK_REGFAIL_SUFF
+    ;
+
+asterisk_authfail:
+    addr ASTERISK_AUTHFAIL
+    ;
+
+asterisk_fakeauthrej:
+    ASTERISK_FAKEAUTHREJ addr ')'
+    ;
+
+asterisk_noreg:
+    ASTERISK_NOREG addr ')'
+    ;
+
+asterisk_md5fail:
+    ASTERISK_MD5FAIL_PREF addr ASTERISK_MD5FAIL_SUFF
+    ;
 %%
 
 static void yyerror(int source_id, const char *msg) { /* do nothing */ }
