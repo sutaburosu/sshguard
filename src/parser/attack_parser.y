@@ -68,6 +68,9 @@ static struct {
     source_metadata_t sources[MAX_FILES_POLLED];
 } parser_metadata = { 0, -1 };
 
+ /* buffer to delay hostname resolution until after a complete rule matches */
+static char hostname[256];  /* FQDN can be max 255 chars according to various sources */
+
 %}
 
  /* parameter to the parsing function */
@@ -224,48 +227,7 @@ addr:
                         strcpy(parsed_attack.address.value, $1);
                     }
     | HOSTADDR      {
-                        struct addrinfo addrinfo_hints;
-                        struct addrinfo *addrinfo_result;
-                        int res;
-
-                        /* look up IPv4 first */
-                        memset(& addrinfo_hints, 0x00, sizeof(addrinfo_hints));
-                        addrinfo_hints.ai_family = AF_INET;
-                        res = getaddrinfo($1, NULL, & addrinfo_hints, & addrinfo_result);
-                        if (res == 0) {
-                            struct sockaddr_in *foo4;
-                            /* pick the first (IPv4) result address and return */
-                            parsed_attack.address.kind = ADDRKIND_IPv4;
-                            foo4 = (struct sockaddr_in *)(addrinfo_result->ai_addr);
-                            if (inet_ntop(AF_INET, & foo4->sin_addr, parsed_attack.address.value, addrinfo_result->ai_addrlen) == NULL) {
-                                freeaddrinfo(addrinfo_result);
-                                sshguard_log(LOG_ERR, "Unable to interpret resolution result as IPv4 address: %s. Giving up entry.", strerror(errno));
-                                YYABORT;
-                            }
-                        } else {
-                            sshguard_log(LOG_DEBUG, "Failed to resolve '%s' @ IPv4! Trying IPv6.", $1);
-                            /* try IPv6 */
-                            addrinfo_hints.ai_family = AF_INET6;
-                            res = getaddrinfo($1, NULL, & addrinfo_hints, & addrinfo_result);
-                            if (res == 0) {
-                                struct sockaddr_in6 *foo6;
-                                /* pick the first (IPv6) result address and return */
-                                parsed_attack.address.kind = ADDRKIND_IPv6;
-                                foo6 = (struct sockaddr_in6 *)(addrinfo_result->ai_addr);
-                                if (inet_ntop(AF_INET6, & foo6->sin6_addr, parsed_attack.address.value, addrinfo_result->ai_addrlen) == NULL) {
-                                    sshguard_log(LOG_ERR, "Unable to interpret resolution result as IPv6 address: %s. Giving up entry.", strerror(errno));
-                                    freeaddrinfo(addrinfo_result);
-                                    YYABORT;
-                                }
-                            } else {
-                                sshguard_log(LOG_ERR, "Could not resolv '%s' in neither of IPv{4,6}. Giving up entry.", $1);
-                                YYABORT;
-                            }
-                        }
-
-                        sshguard_log(LOG_INFO, "Successfully resolved '%s' --> %d:'%s'.",
-                                $1, parsed_attack.address.kind, parsed_attack.address.value);
-                        freeaddrinfo(addrinfo_result);
+                        strncpy((char *) hostname, $1, 255);
                     }
     ;
 
@@ -408,6 +370,9 @@ static void init_structures(int source_id) {
 
     /* set current source index */
     parser_metadata.current_source_index = cnt;
+
+    /* zero hostname buffer */
+    hostname[0]=0;
 }
 
 int parse_line(int source_id, char *str) {
@@ -427,6 +392,54 @@ int parse_line(int source_id, char *str) {
         /* update metadata on this source */
         parser_metadata.sources[parser_metadata.current_source_index].last_was_recognized = 1;
         parser_metadata.sources[parser_metadata.current_source_index].last_attack = parsed_attack;
+        /* resolve hostname if any */
+        if (hostname[0] != 0) {
+            struct addrinfo addrinfo_hints;
+            struct addrinfo *addrinfo_result;
+            int res;
+
+            /* look up IPv4 first */
+            memset(& addrinfo_hints, 0x00, sizeof(addrinfo_hints));
+            addrinfo_hints.ai_family = AF_INET;
+            res = getaddrinfo(hostname, NULL, & addrinfo_hints, & addrinfo_result);
+            if (res == 0) {
+                struct sockaddr_in *foo4;
+                /* pick the first (IPv4) result address and return */
+                parsed_attack.address.kind = ADDRKIND_IPv4;
+                foo4 = (struct sockaddr_in *)(addrinfo_result->ai_addr);
+                if (inet_ntop(AF_INET, & foo4->sin_addr, parsed_attack.address.value, addrinfo_result->ai_addrlen) == NULL) {
+                    freeaddrinfo(addrinfo_result);
+                    sshguard_log(LOG_ERR, "Unable to interpret resolution result as IPv4 address: %s. Giving up entry.", strerror(errno));
+                    return 1;
+                }
+            } else {
+                sshguard_log(LOG_DEBUG, "Failed to resolve '%s' @ IPv4! Trying IPv6.", hostname);
+                /* try IPv6 */
+                addrinfo_hints.ai_family = AF_INET6;
+                res = getaddrinfo(hostname, NULL, & addrinfo_hints, & addrinfo_result);
+                if (res == 0) {
+                    struct sockaddr_in6 *foo6;
+                    /* pick the first (IPv6) result address and return */
+                    parsed_attack.address.kind = ADDRKIND_IPv6;
+                    foo6 = (struct sockaddr_in6 *)(addrinfo_result->ai_addr);
+                    if (inet_ntop(AF_INET6, & foo6->sin6_addr, parsed_attack.address.value, addrinfo_result->ai_addrlen) == NULL) {
+                        sshguard_log(LOG_ERR, "Unable to interpret resolution result as IPv6 address: %s. Giving up entry.", strerror(errno));
+                        freeaddrinfo(addrinfo_result);
+                        return 1;
+                    }
+                } else {
+                    sshguard_log(LOG_ERR, "Could not resolv '%s' in neither of IPv{4,6}. Giving up entry.", hostname);
+                    return 1;
+                }
+            }
+
+            sshguard_log(LOG_INFO, "Successfully resolved '%s' --> %d:'%s'.",
+                    hostname, parsed_attack.address.kind, parsed_attack.address.value);
+            freeaddrinfo(addrinfo_result);
+            sshguard_log(LOG_NOTICE, "Resolving deferred hostname: %s", hostname);
+            // printf('logged host: %s', hostname);
+            
+        }
     } else {
         /* message not recognized */
         parser_metadata.sources[parser_metadata.current_source_index].last_was_recognized = 0;
